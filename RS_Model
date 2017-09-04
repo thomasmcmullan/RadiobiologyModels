@@ -1,0 +1,207 @@
+% Calculates NTCP for patients using dose volume histogram (DVH) data. 
+% Relative Seriality equations can be found in Hanbook of Radiotherapy Physics: Theory &
+% Practice Chapter 36 (36.3.3.3 - NTCP).
+
+%clear all;close all;clc;
+global inputfiles Pneu Frac DPF %(Pneu = pneumonitis, no pneumonitis. Frac = fraction vol irradited, DPF = dose/fraction)
+inputfiles=dir('*.txt'); %DVH data for each patient in txt format
+M = csvread('allboth.csv');
+Pneu = M(:,29);
+Frac = M(:,9);
+DPF = M(:,4);
+
+for i=1:length(inputfiles)%import patients
+    fid(i)=fopen(inputfiles(i).name);
+    inputfiles(i).values=textscan(fid(i),'%f%*f%f%[^\n\r]','delimiter',';','HeaderLines',33);
+    fclose(fid(i));
+end
+%disp(length(inputfiles));
+% p = NTCP(n, TD50, m);
+% disp(p)
+ 
+s = 0.06;
+gamma = 0.9;
+D50 = 34;
+
+a0 = [s gamma D50]
+% options = optimset('MaxFunEvals', 100000,'MaxIter',10000,'Display','off');
+%options = optimset('MaxFunEvals', 10000);
+% a = fminsearch(@myfunc,a0, options) 
+
+A = [];
+b = [];
+Aeq = [];
+beq = [];
+nonlcon = [];
+
+lb = [0.01 0.1 0]; % lower bound for parmeter search
+ub = [1.0 5 90]; % upper bound for parameter search
+% options = optimset('display','iter', 'LargeScale','off', 'MaxFunEvals',100000, 'TolFun',1e-8, 'TolX',1e-6);
+a = fmincon(@myfunc,a0,A,b,Aeq,beq,lb,ub)
+
+% a0 = [s gamma D50]
+ymin =  myfunc(a)
+s = a(1);
+gamma = a(2);
+D50 = a(3);
+
+AxesH = axes('NextPlot', 'add');
+plot(0, 0, 'Parent', AxesH);
+
+m = (pi/8*gamma);
+% m = (1/(sqrt(pi)*gamma));
+
+D = linspace(0,50,201); 
+x = (D - D50)/(m*D50);
+% plot(D,normcdf(x));
+% hold on
+% plotPatients(s, gamma, D50) %plots patients ntcp with fit parameters
+
+s = 0.06;
+gamma = 0.9;
+D50 = 34;
+m = (pi/8*gamma);
+% m = (1/(sqrt(pi)*gamma));
+
+D = linspace(0,50,201);
+x = (D - D50)/(m*D50);
+plot(0, 0, 'Parent', AxesH);
+
+% hold on
+plotPatients(s, gamma, D50)%plots patients ntcp with literature parameters
+plot(D,normcdf(x),'-b');
+legend('Seppenwoolde et al (2003)','Fit','Location','SE')
+
+% legend('Gagliardi et al (2000)','Location','SE')
+
+xlabel('EUD (Gy)')
+ylabel('NTCP')
+
+xlim([0 30])
+ylim([0 0.3])
+% yticks(0:0.1:0.8)
+
+function p = NTCP(s, gamma, D50) %calculate RS NTCP with EUD (n=1)
+global inputfiles DPF
+p = zeros(length(inputfiles),1);
+prob = zeros(length(inputfiles),1);
+% tmp = zeros(length(inputfiles),1);
+dpf = DPF;
+e = exp(1);
+
+for i=1:length(inputfiles)
+    dose = cell2mat(inputfiles(i).values(:,1));
+    vol = cell2mat(inputfiles(i).values(:,2));
+    
+    ab = 3.0;
+    d = dpf(i);
+    
+    eqd2 = dose*((ab+d)/(ab+2));%LQ 2Gy/fraction correction
+    v = vol/sum(vol);
+    
+    prob = 2.^(-exp(e*gamma*(1-eqd2/D50)));
+    
+    tmp = (1 - prob.^s).^v;
+    
+    p(i) = (1 - prod(tmp))^(1/s);% NTCP calculation for each patient
+end 
+
+end
+
+function y = myfunc(v)%max likelihood - not working properly
+global inputfiles Pneu
+ep = Pneu;
+
+s = v(1);
+gamma = v(2);
+D50 = v(3);
+
+p = NTCP(s, gamma, D50);
+tmp = 0;
+for i=1:length(inputfiles)
+    tmp =  tmp + ep(i)*log(p(i)) + (1.0-ep(i))*log(1-p(i)); %max likelihood   
+end
+y = -tmp;
+end
+
+function plotPatients(s, gamma, D50)% function to plot patients
+global inputfiles Pneu DPF 
+p = zeros(length(inputfiles),1);
+Deff = zeros(length(inputfiles),1);
+dpf = DPF;
+e = exp(1);
+n = 1.0;
+
+for i=1:length(inputfiles)
+    dose = cell2mat(inputfiles(i).values(:,1));
+    vol = cell2mat(inputfiles(i).values(:,2));
+    
+    ab = 3.0;
+    d = dpf(i);
+    
+    eqd2 = dose*((ab+d)/(ab+2));%LQ 2Gy/fraction correction
+   
+    v = vol/sum(vol);
+    dn = eqd2.^(1/n);
+    
+    Deff(i) = (sum(v.*dn))^n; %calculate Deff (n=1)
+    
+    prob = 2.^(-exp(e*gamma*(1-eqd2/D50)));
+    tmp = (1 - prob.^s).^v;
+
+    p(i) = (1 - prod(tmp))^(1/s);%calculate NTCP
+end
+% disp(Deff)
+numYes = 0; %Patients with Pneumonitis
+numNo = 0; %Patients without Pneumonitis
+%disp(length(inputfiles))
+for i=1:length(inputfiles)
+    if Pneu(i) == 1
+        numYes = numYes + 1;
+    else
+        numNo = numNo + 1;
+    end
+end
+Dy = zeros(numYes,1); % patients with Pneu effective dose
+Dn = zeros(numNo,1); % patients without Pneu effective dose
+
+ntcpy = zeros(numYes,1); %ntcp with Pneu
+ntcpn = zeros(numNo,1); %ntcp without Pneu
+
+iy = 1;
+in = 1;
+for i=1:length(inputfiles)
+    if Pneu(i) == 1
+        Dy(iy) = Deff(i);
+        ntcpy(iy) = p(i) ;
+        iy = iy + 1;
+    else
+        Dn(in) = Deff(i);
+        ntcpn(in) = p(i);
+        in = in + 1;
+    end
+end
+predicted = @(a, xdata) normcdf((xdata-a(1))/a(2))
+a0 = [10, 0.5]
+[ahat,r,J,cov,mse] = nlinfit(Deff,p,predicted,a0)% nonlinfit for nomcdf function (mu, sigma)
+ci = nlparci(ahat,r,'Jacobian',J);
+
+xplot = linspace(0,50,201);
+yplot = normcdf((xplot-ahat(1))/ahat(2));%NTCP fit
+
+plot(Dy, ntcpy, 'rx');
+plot(Dn, ntcpn, 'ko');
+plot(xplot, yplot);
+
+% disp(ntcpy)
+% disp(ntcpn)
+% disp(Dy)
+% disp(Dn)
+% str = {'x = Pneumonitis','o = No Pneumonitis'};
+str = {'x = Pneumonitis'};
+text(1,0.1,str)
+str1 = {'s = 0.06', '\gamma (fit) = 1.31', 'D50(fit) = 30.2'};
+% str1 = {'s = 0.01', '\gamma = 0.97', 'D50 = 30.1'};
+text(22,0.085,str1)
+% set(gca,'FontWeight','bold')
+end
