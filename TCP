@@ -1,0 +1,99 @@
+Dose = [0
+3
+6
+9
+12
+15
+18
+21
+24
+27
+30
+33
+36
+39
+42
+45
+48
+51
+54
+57
+60
+63
+66
+69
+72
+75
+78
+81
+84
+87
+];
+
+[X1, TCPt1, Nt1] = TumourControl(1000000);
+% set(gca, 'YScale', 'log')
+% plot(Dose,TCPt1);
+% set(gca, 'YScale', 'log')
+hold on
+plot(Dose,TCPt1);
+
+[X2, TCPt2, Nt2] = TumourControl(2000000);
+plot(Dose,TCPt2);
+
+[X3, TCPt3, Nt3] = TumourControl(4000000);
+plot(Dose,TCPt3);
+ 
+% [X4, TCPt4, Nt4] = TumourControl(0.26, 0.0312);
+% plot(X4,TCPt4);
+
+disp([Nt1,Nt2,Nt3])
+
+xlabel('Dose (Gy)')
+ylabel('TCP')
+% xlim([5 25])
+% ylim([0 0.5])
+
+function [X, TCPt, Nt] = TumourControl(cellDensity)% TCP function - can change arguement to investigate different parameters
+nFrac = 30; % no. of fractions
+% cellDensity = 1000000; %initial number of cells
+hypoxicVol = 3.56; % hypoxic volume
+oxicVol = 80.97; % oxic volume
+volFrac = hypoxicVol/oxicVol; % volume fraction
+rePop = 1.084; % repopulation rate
+reOxRate = 0.03; % reoxygenation
+reOx = 0.2; % reoxygenation
+deathRate = 0.05; % severe hypoxia cell death
+q0 = 1.75; % hypoxic reduction factor
+alpha = 0.26; % radiosensitivity
+beta = 0.0312; % radiosensitivity
+% s = 1.36;
+d = 3; % dose per fraction
+X = zeros(nFrac,1);
+No = zeros(nFrac,1);
+Nh = zeros(nFrac,1);
+Nt = zeros(nFrac,1);
+TCPt = zeros(nFrac,1);
+
+NoInit = cellDensity*(1-volFrac);
+NhInit = cellDensity*volFrac;
+
+for i=1:nFrac
+    X(i) = i;
+    if i == 1
+        preFac_o = NoInit; %fraction 1 initial no. of oxic cells
+        preFac_h = NhInit;%fraction 1 initial no. of hypoxic cells
+    else
+        preFac_o = No(i-1);%number of oxic cells following each fraction
+        preFac_h = Nh(i-1)*(1-deathRate);%number of hyoxic cells following each fraction + cell death from severe hypoxia
+    end
+    q = (q0-1)*exp(-reOxRate*i) + 1; % hypoxic reduction factor
+    reOxDyn = reOx*(1 - exp(-reOxRate*i));%dynamic reoxygention
+    gammao = (alpha*d) + (beta*d*d);
+    gammah = (alpha*d)/q + (beta*d*d)/(q*q);
+    No(i) = preFac_o*exp(-gammao)*rePop + preFac_h*exp(-gammah)*reOxDyn; %no. of surviving oxic cells
+    Nh(i) = preFac_h*exp(-gammah) - preFac_h*exp(-gammah)*reOxDyn;%number of surviving hypoxic cells
+    Nt(i) = No(i) + Nh(i); % total number of cell after each fraction
+    TCPt(i) = exp(-Nt(i)); % calculate TCP
+end
+
+end
